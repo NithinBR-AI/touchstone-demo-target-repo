@@ -114,6 +114,10 @@ components:
         created_at:
           type: string
           format: date-time
+        loyalty_tier:
+          type: string
+          nullable: true
+          description: Customer loyalty tier (bronze/silver/gold) — declared in spec but not yet returned by API
 
     Order:
       type: object
