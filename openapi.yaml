@@ -1,0 +1,149 @@
+openapi: "3.1.0"
+info:
+  title: Customer Service API
+  description: |
+    Customer-facing REST API for the Touchstone demo target.
+    This openapi.yaml is the SOURCE OF TRUTH for what the API *should* look like.
+    Touchstone's contract-observer app scans a live service and compares it against
+    this spec to detect contract drift.
+  version: "1.0.0"
+
+servers:
+  - url: http://localhost:9000
+    description: Local demo server
+
+paths:
+  /users:
+    get:
+      operationId: listUsers
+      summary: List all users
+      responses:
+        "200":
+          description: Array of user objects
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/User"
+
+  /users/{id}:
+    get:
+      operationId: getUser
+      summary: Fetch a single user
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: A user object
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "404":
+          description: User not found
+
+  /orders:
+    get:
+      operationId: listOrders
+      summary: List all orders
+      responses:
+        "200":
+          description: Array of order objects
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Order"
+
+  /orders/{id}:
+    get:
+      operationId: getOrder
+      summary: Fetch a single order
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: An order object
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+        "404":
+          description: Order not found
+
+  /products:
+    get:
+      operationId: listProducts
+      summary: List all products
+      responses:
+        "200":
+          description: Array of product objects
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Product"
+
+components:
+  schemas:
+    User:
+      type: object
+      required: [id, email]
+      properties:
+        id:
+          type: integer
+        email:
+          type: string
+          maxLength: 255        # declared max — DB has VARCHAR(50), that's the drift
+        age:
+          type: integer
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    Order:
+      type: object
+      required: [id]
+      properties:
+        id:
+          type: integer
+        user_id:
+          type: integer
+          nullable: true
+        total:
+          type: number
+          format: decimal
+          nullable: true
+        status:
+          type: string
+          maxLength: 20
+          nullable: true
+
+    Product:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+          maxLength: 100
+        price:
+          type: number
+          format: decimal
+          nullable: true
+        stock:
+          type: integer
+          nullable: true
