@@ -9,8 +9,10 @@ info:
   version: "1.0.0"
 
 servers:
+  - url: https://touchstone-demo-target.onrender.com
+    description: Render deployment (live)
   - url: http://localhost:9000
-    description: Local demo server
+    description: Local dev server
 
 paths:
   /users:
