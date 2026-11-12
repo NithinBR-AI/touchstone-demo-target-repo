@@ -1,17 +1,3 @@
-"""
-Customer Service API — Touchstone demo target.
-
-Intentional drift baked in for demo purposes:
-
-  Cache drift (detected by Poltergeist):
-    · products:list        never cached → KEY_MISSING
-    · debug:session_dump   in Redis, not declared → UNDECLARED_KEY
-
-  Contract drift (detected by Contract Observer):
-    · GET /users    returns `account_status` — not in openapi.yaml
-    · GET /products returns `sku` — not in openapi.yaml
-"""
-
 from __future__ import annotations
 
 import json
@@ -104,6 +90,7 @@ def list_users():
             "id": r[0], "email": r[1], "age": r[2],
             "created_at": r[3].isoformat() if r[3] else None,
             "account_status": "active",  # undocumented — contract drift
+            "loyalty_tier": None,  # TODO: implement
         }
         for r in rows
     ]
@@ -126,6 +113,7 @@ def get_user(user_id: int):
         "id": row[0], "email": row[1], "age": row[2],
         "created_at": row[3].isoformat() if row[3] else None,
         "account_status": "active",  # undocumented — contract drift
+        "loyalty_tier": None,  # TODO: implement
     }
 
 
