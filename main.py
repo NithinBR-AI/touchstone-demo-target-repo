@@ -1,24 +1,24 @@
 """
-main.py — Customer Service API (Touchstone demo target).
+Customer Service API — Touchstone demo target.
 
-This is the LIVE API that Contract Observer probes. It intentionally returns
-fields that are NOT documented in openapi.yaml — that is the contract drift
-Touchstone detects.
+Intentional drift baked in for demo purposes:
 
-Cache drift (vs cache_config.yaml) for Poltergeist app:
-  · products:list never cached → KEY_MISSING ghost
-  · debug:session_dump exists in Redis (set manually) → UNDECLARED_KEY ghost
+  Cache drift (detected by Poltergeist):
+    · products:list        never cached → KEY_MISSING
+    · debug:session_dump   in Redis, not declared → UNDECLARED_KEY
 
-Contract drift (vs openapi.yaml):
-  · GET /users    → returns `account_status` — undocumented in spec
-  · GET /products → returns `sku` — undocumented in spec
+  Contract drift (detected by Contract Observer):
+    · GET /users    returns `account_status` — not in openapi.yaml
+    · GET /products returns `sku` — not in openapi.yaml
 """
 
 from __future__ import annotations
 
 import json
 import os
+import urllib.parse
 import urllib.request
+from typing import Any
 
 import psycopg
 from dotenv import load_dotenv
@@ -26,58 +26,53 @@ from fastapi import FastAPI, HTTPException
 
 load_dotenv()
 
-DB_URL                   = os.environ.get("DATABASE_URL", "")
+DATABASE_URL             = os.environ["DATABASE_URL"]
 UPSTASH_REDIS_REST_URL   = os.environ.get("UPSTASH_REDIS_REST_URL", "")
 UPSTASH_REDIS_REST_TOKEN = os.environ.get("UPSTASH_REDIS_REST_TOKEN", "")
 
 app = FastAPI(
     title="Customer Service API",
-    description="Demo target for Touchstone contract-observer and poltergeist.",
+    description="Demo target for Touchstone drift detection.",
     version="1.0.0",
 )
 
 
+# ---------------------------------------------------------------------------
+# DB
+# ---------------------------------------------------------------------------
+
 def _conn():
-    return psycopg.connect(DB_URL)
+    return psycopg.connect(DATABASE_URL)
 
 
-def _redis_get(path: str) -> dict:
-    """Call Upstash REST API."""
+# ---------------------------------------------------------------------------
+# Redis (Upstash REST API)
+# ---------------------------------------------------------------------------
+
+def _redis(path: str, method: str = "GET", data: bytes | None = None) -> Any:
     if not UPSTASH_REDIS_REST_URL or not UPSTASH_REDIS_REST_TOKEN:
-        raise HTTPException(503, detail="Upstash REST not configured")
+        raise HTTPException(503, detail="Redis not configured")
     req = urllib.request.Request(
         f"{UPSTASH_REDIS_REST_URL}/{path}",
         headers={"Authorization": f"Bearer {UPSTASH_REDIS_REST_TOKEN}"},
+        data=data,
+        method=method,
     )
     with urllib.request.urlopen(req, timeout=10) as resp:
         return json.loads(resp.read())
 
 
 def _redis_set(key: str, value: str) -> None:
-    """SET a key via Upstash REST API."""
-    if not UPSTASH_REDIS_REST_URL or not UPSTASH_REDIS_REST_TOKEN:
-        return
-    req = urllib.request.Request(
-        f"{UPSTASH_REDIS_REST_URL}/set/{key}/{urllib.parse.quote(value)}",
-        headers={"Authorization": f"Bearer {UPSTASH_REDIS_REST_TOKEN}"},
-    )
-    with urllib.request.urlopen(req, timeout=10):
-        pass
+    _redis(f"set/{key}/{urllib.parse.quote(value, safe='')}")
 
 
 def _redis_del(key: str) -> None:
-    """DEL a key via Upstash REST API."""
-    if not UPSTASH_REDIS_REST_URL or not UPSTASH_REDIS_REST_TOKEN:
-        return
-    req = urllib.request.Request(
-        f"{UPSTASH_REDIS_REST_URL}/del/{key}",
-        headers={"Authorization": f"Bearer {UPSTASH_REDIS_REST_TOKEN}"},
-    )
-    with urllib.request.urlopen(req, timeout=10):
-        pass
+    _redis(f"del/{key}")
 
 
-import urllib.parse
+def _redis_keys(pattern: str = "*") -> list[str]:
+    result = _redis(f"keys/{urllib.parse.quote(pattern, safe='*')}")
+    return result.get("result") or []
 
 
 # ---------------------------------------------------------------------------
@@ -87,12 +82,10 @@ import urllib.parse
 @app.get("/health")
 def health():
     redis_ok = False
-    if UPSTASH_REDIS_REST_URL:
-        try:
-            result = _redis_get("ping")
-            redis_ok = result.get("result") == "PONG"
-        except Exception:
-            pass
+    try:
+        redis_ok = _redis("ping").get("result") == "PONG"
+    except Exception:
+        pass
     return {"status": "ok", "redis": redis_ok}
 
 
@@ -108,36 +101,31 @@ def list_users():
         ).fetchall()
     result = [
         {
-            "id": r[0],
-            "email": r[1],
-            "age": r[2],
+            "id": r[0], "email": r[1], "age": r[2],
             "created_at": r[3].isoformat() if r[3] else None,
-            "account_status": "active",   # undocumented — CONTRACT DRIFT
+            "account_status": "active",  # undocumented — contract drift
         }
         for r in rows
     ]
-    if UPSTASH_REDIS_REST_URL:
-        try:
-            _redis_set("users:list", json.dumps(result, default=str))
-        except Exception:
-            pass
+    try:
+        _redis_set("users:list", json.dumps(result, default=str))
+    except Exception:
+        pass
     return result
 
 
-@app.get("/users/{id}")
-def get_user(id: int):
+@app.get("/users/{user_id}")
+def get_user(user_id: int):
     with _conn() as conn:
         row = conn.execute(
-            "SELECT id, email, age, created_at FROM users WHERE id = %s", (id,)
+            "SELECT id, email, age, created_at FROM users WHERE id = %s", (user_id,)
         ).fetchone()
     if row is None:
         raise HTTPException(404, detail="User not found")
     return {
-        "id": row[0],
-        "email": row[1],
-        "age": row[2],
+        "id": row[0], "email": row[1], "age": row[2],
         "created_at": row[3].isoformat() if row[3] else None,
-        "account_status": "active",   # undocumented — CONTRACT DRIFT
+        "account_status": "active",  # undocumented — contract drift
     }
 
 
@@ -155,27 +143,24 @@ def list_orders():
         {"id": r[0], "user_id": r[1], "total": float(r[2]) if r[2] else None, "status": r[3]}
         for r in rows
     ]
-    if UPSTASH_REDIS_REST_URL:
-        try:
-            _redis_set("orders:list", json.dumps(result, default=str))
-        except Exception:
-            pass
+    try:
+        _redis_set("orders:list", json.dumps(result, default=str))
+    except Exception:
+        pass
     return result
 
 
-@app.get("/orders/{id}")
-def get_order(id: int):
+@app.get("/orders/{order_id}")
+def get_order(order_id: int):
     with _conn() as conn:
         row = conn.execute(
-            "SELECT id, user_id, total, status FROM orders WHERE id = %s", (id,)
+            "SELECT id, user_id, total, status FROM orders WHERE id = %s", (order_id,)
         ).fetchone()
     if row is None:
         raise HTTPException(404, detail="Order not found")
     return {
-        "id": row[0],
-        "user_id": row[1],
-        "total": float(row[2]) if row[2] else None,
-        "status": row[3],
+        "id": row[0], "user_id": row[1],
+        "total": float(row[2]) if row[2] else None, "status": row[3],
     }
 
 
@@ -191,61 +176,71 @@ def list_products():
         ).fetchall()
     return [
         {
-            "id": r[0],
-            "name": r[1],
-            "price": float(r[2]) if r[2] else None,
-            "stock": r[3],
-            "sku": f"SKU-{r[0]:04d}",   # undocumented — CONTRACT DRIFT
+            "id": r[0], "name": r[1],
+            "price": float(r[2]) if r[2] else None, "stock": r[3],
+            "sku": f"SKU-{r[0]:04d}",  # undocumented — contract drift
         }
         for r in rows
     ]
 
 
 # ---------------------------------------------------------------------------
-# Cache status — returns all keys currently in Redis
+# Cache
 # ---------------------------------------------------------------------------
 
 @app.get("/cache/status")
 def cache_status():
-    """Returns all keys currently in Redis for Poltergeist drift detection."""
-    result = _redis_get("keys/*")
-    return {"keys": sorted(result.get("result", []))}
+    """Return all keys currently in Redis."""
+    return {"keys": sorted(_redis_keys())}
 
-
-# ---------------------------------------------------------------------------
-# Cache warm — restores drift state after a judge applies a fix
-# ---------------------------------------------------------------------------
 
 @app.post("/cache/warm")
-def cache_warm():
-    """Restore drift state for demo replay after a judge applies fixes.
+def cache_warm(key: str | None = None):
+    """Warm a specific declared cache key from the DB.
 
-    After warm, Redis state is:
-      users:list         ✓ present (declared, healthy)
-      orders:list        ✓ present (declared, healthy)
-      products:list      ✗ absent  → KEY_MISSING ghost
-      debug:session_dump ✓ present (undeclared) → UNDECLARED_KEY ghost
+    POST /cache/warm?key=products:list  — populates that key in Redis.
+    POST /cache/warm                    — full reset, restores demo drift state.
+
+    Demo drift state:
+      users:list         ✓ cached
+      orders:list        ✓ cached
+      products:list      ✗ missing  → KEY_MISSING ghost
+      debug:session_dump ✓ present, undeclared → UNDECLARED_KEY ghost
     """
     with _conn() as conn:
-        users = conn.execute(
-            "SELECT id, email, age, created_at FROM users ORDER BY id"
-        ).fetchall()
-        orders = conn.execute(
-            "SELECT id, user_id, total, status FROM orders ORDER BY id"
-        ).fetchall()
+        users  = conn.execute("SELECT id, email, age, created_at FROM users ORDER BY id").fetchall()
+        orders = conn.execute("SELECT id, user_id, total, status FROM orders ORDER BY id").fetchall()
+        products = conn.execute("SELECT id, name, price, stock FROM products ORDER BY id").fetchall()
 
-    users_data = [
+    _users_data = [
         {"id": r[0], "email": r[1], "age": r[2],
          "created_at": r[3].isoformat() if r[3] else None, "account_status": "active"}
         for r in users
     ]
-    orders_data = [
+    _orders_data = [
         {"id": r[0], "user_id": r[1], "total": float(r[2]) if r[2] else None, "status": r[3]}
         for r in orders
     ]
+    _products_data = [
+        {"id": r[0], "name": r[1], "price": float(r[2]) if r[2] else None, "stock": r[3]}
+        for r in products
+    ]
 
-    _redis_set("users:list", json.dumps(users_data, default=str))
-    _redis_set("orders:list", json.dumps(orders_data, default=str))
+    if key == "products:list":
+        _redis_set("products:list", json.dumps(_products_data, default=str))
+        return {"status": "warmed", "key": key}
+
+    if key == "users:list":
+        _redis_set("users:list", json.dumps(_users_data, default=str))
+        return {"status": "warmed", "key": key}
+
+    if key == "orders:list":
+        _redis_set("orders:list", json.dumps(_orders_data, default=str))
+        return {"status": "warmed", "key": key}
+
+    # Full reset — restore demo drift state
+    _redis_set("users:list",   json.dumps(_users_data,   default=str))
+    _redis_set("orders:list",  json.dumps(_orders_data,  default=str))
     _redis_del("products:list")
     _redis_set("debug:session_dump", '{"users": "all"}')
 
