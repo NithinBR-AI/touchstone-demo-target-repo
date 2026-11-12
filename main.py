@@ -126,6 +126,7 @@ def get_user(user_id: int):
         "id": row[0], "email": row[1], "age": row[2],
         "created_at": row[3].isoformat() if row[3] else None,
         "account_status": "active",  # undocumented — contract drift
+        "loyalty_tier": None,  # TODO: implement
     }
 
 
