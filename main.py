@@ -5,33 +5,30 @@ This is the LIVE API that Contract Observer probes. It intentionally returns
 fields that are NOT documented in openapi.yaml — that is the contract drift
 Touchstone detects.
 
-It also uses Redis caching with intentional drift vs cache_config.yaml:
-  · eviction_policy declared as allkeys-lru but Upstash default is noeviction
-  · orders:list cached with TTL=999 instead of declared 180  (TTL_MISMATCH)
-  · products:list never cached                               (KEY_MISSING)
-  · users:list cached correctly with TTL=300                 (no drift)
+Cache drift (vs cache_config.yaml) for Poltergeist app:
+  · products:list never cached → KEY_MISSING ghost
+  · debug:session_dump exists in Redis (set manually) → UNDECLARED_KEY ghost
 
-Drift cases (vs openapi.yaml):
-  · GET /users       → returns `account_status` field — undocumented in spec
-  · GET /users/{id}  → returns `account_status` field — undocumented in spec
-  · GET /products    → returns `sku` field — undocumented in spec
+Contract drift (vs openapi.yaml):
+  · GET /users    → returns `account_status` — undocumented in spec
+  · GET /products → returns `sku` — undocumented in spec
 """
 
 from __future__ import annotations
 
 import json
 import os
+import urllib.request
 
 import psycopg
-import redis as redis_lib
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import JSONResponse
 
 load_dotenv()
 
-DB_URL    = os.environ.get("DATABASE_URL", "")
-REDIS_URL = os.environ.get("REDIS_URL", "")
+DB_URL                   = os.environ.get("DATABASE_URL", "")
+UPSTASH_REDIS_REST_URL   = os.environ.get("UPSTASH_REDIS_REST_URL", "")
+UPSTASH_REDIS_REST_TOKEN = os.environ.get("UPSTASH_REDIS_REST_TOKEN", "")
 
 app = FastAPI(
     title="Customer Service API",
@@ -39,20 +36,48 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# Redis client — None if not configured
-_redis: redis_lib.Redis | None = None
-if REDIS_URL:
-    _redis = redis_lib.from_url(REDIS_URL, decode_responses=True)
-
 
 def _conn():
     return psycopg.connect(DB_URL)
 
 
-def _r() -> redis_lib.Redis:
-    if _redis is None:
-        raise HTTPException(503, detail="REDIS_URL not configured")
-    return _redis
+def _redis_get(path: str) -> dict:
+    """Call Upstash REST API."""
+    if not UPSTASH_REDIS_REST_URL or not UPSTASH_REDIS_REST_TOKEN:
+        raise HTTPException(503, detail="Upstash REST not configured")
+    req = urllib.request.Request(
+        f"{UPSTASH_REDIS_REST_URL}/{path}",
+        headers={"Authorization": f"Bearer {UPSTASH_REDIS_REST_TOKEN}"},
+    )
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        return json.loads(resp.read())
+
+
+def _redis_set(key: str, value: str) -> None:
+    """SET a key via Upstash REST API."""
+    if not UPSTASH_REDIS_REST_URL or not UPSTASH_REDIS_REST_TOKEN:
+        return
+    req = urllib.request.Request(
+        f"{UPSTASH_REDIS_REST_URL}/set/{key}/{urllib.parse.quote(value)}",
+        headers={"Authorization": f"Bearer {UPSTASH_REDIS_REST_TOKEN}"},
+    )
+    with urllib.request.urlopen(req, timeout=10):
+        pass
+
+
+def _redis_del(key: str) -> None:
+    """DEL a key via Upstash REST API."""
+    if not UPSTASH_REDIS_REST_URL or not UPSTASH_REDIS_REST_TOKEN:
+        return
+    req = urllib.request.Request(
+        f"{UPSTASH_REDIS_REST_URL}/del/{key}",
+        headers={"Authorization": f"Bearer {UPSTASH_REDIS_REST_TOKEN}"},
+    )
+    with urllib.request.urlopen(req, timeout=10):
+        pass
+
+
+import urllib.parse
 
 
 # ---------------------------------------------------------------------------
@@ -62,9 +87,10 @@ def _r() -> redis_lib.Redis:
 @app.get("/health")
 def health():
     redis_ok = False
-    if _redis:
+    if UPSTASH_REDIS_REST_URL:
         try:
-            redis_ok = _redis.ping()
+            result = _redis_get("ping")
+            redis_ok = result.get("result") == "PONG"
         except Exception:
             pass
     return {"status": "ok", "redis": redis_ok}
@@ -86,13 +112,15 @@ def list_users():
             "email": r[1],
             "age": r[2],
             "created_at": r[3].isoformat() if r[3] else None,
-            "account_status": "active",   # undocumented in openapi.yaml — CONTRACT DRIFT
+            "account_status": "active",   # undocumented — CONTRACT DRIFT
         }
         for r in rows
     ]
-    # Cache correctly — TTL matches declared 300s (no drift here)
-    if _redis:
-        _redis.setex("users:list", 300, json.dumps(result, default=str))
+    if UPSTASH_REDIS_REST_URL:
+        try:
+            _redis_set("users:list", json.dumps(result, default=str))
+        except Exception:
+            pass
     return result
 
 
@@ -109,7 +137,7 @@ def get_user(id: int):
         "email": row[1],
         "age": row[2],
         "created_at": row[3].isoformat() if row[3] else None,
-        "account_status": "active",   # undocumented in openapi.yaml — CONTRACT DRIFT
+        "account_status": "active",   # undocumented — CONTRACT DRIFT
     }
 
 
@@ -127,9 +155,11 @@ def list_orders():
         {"id": r[0], "user_id": r[1], "total": float(r[2]) if r[2] else None, "status": r[3]}
         for r in rows
     ]
-    # INTENTIONAL DRIFT: declared TTL=180, actually caching with TTL=999
-    if _redis:
-        _redis.setex("orders:list", 999, json.dumps(result, default=str))
+    if UPSTASH_REDIS_REST_URL:
+        try:
+            _redis_set("orders:list", json.dumps(result, default=str))
+        except Exception:
+            pass
     return result
 
 
@@ -150,7 +180,7 @@ def get_order(id: int):
 
 
 # ---------------------------------------------------------------------------
-# Products
+# Products — intentionally NOT cached (KEY_MISSING drift)
 # ---------------------------------------------------------------------------
 
 @app.get("/products")
@@ -159,71 +189,36 @@ def list_products():
         rows = conn.execute(
             "SELECT id, name, price, stock FROM products ORDER BY id"
         ).fetchall()
-    result = [
+    return [
         {
             "id": r[0],
             "name": r[1],
             "price": float(r[2]) if r[2] else None,
             "stock": r[3],
-            "sku": f"SKU-{r[0]:04d}",   # undocumented in openapi.yaml — CONTRACT DRIFT
+            "sku": f"SKU-{r[0]:04d}",   # undocumented — CONTRACT DRIFT
         }
         for r in rows
     ]
-    # INTENTIONAL DRIFT: declared TTL=600, never cached (KEY_MISSING drift)
-    # products:list is intentionally NOT written to Redis
-    return result
 
 
 # ---------------------------------------------------------------------------
-# Cache warm — sets keys with intentional drift for Poltergeist demo
-# ---------------------------------------------------------------------------
-
-@app.post("/cache/warm")
-def cache_warm():
-    """
-    Re-populate Redis with intentional drift so Poltergeist always has ghosts.
-    Call this before running a demo scan.
-
-    Drift state after warm:
-      · users:list   TTL=300  (matches declared — no drift)
-      · orders:list  TTL=999  (declared=180 — TTL_MISMATCH ghost)
-      · products:list missing (declared=600 — KEY_MISSING ghost)
-    """
-    r = _r()
-    r.setex("users:list",  300, '["warmed"]')
-    r.setex("orders:list", 999, '["warmed"]')   # intentional TTL mismatch
-    # products:list intentionally NOT set                                    # KEY_MISSING
-    return {
-        "status": "warmed",
-        "keys": {
-            "users:list":    {"ttl": 300,  "drift": False},
-            "orders:list":   {"ttl": 999,  "drift": "TTL_MISMATCH (declared 180)"},
-            "products:list": {"ttl": None, "drift": "KEY_MISSING (declared 600)"},
-        },
-    }
-
-
-# ---------------------------------------------------------------------------
-# Cache status — read-only view of current Redis state
+# Cache status — returns all keys currently in Redis
 # ---------------------------------------------------------------------------
 
 @app.get("/cache/status")
 def cache_status():
-    """Current Redis state — used by Poltergeist actual adapter."""
-    r = _r()
-    keys = ["users:list", "orders:list", "products:list"]
-    status = {}
-    for key in keys:
-        ttl = r.ttl(key)   # -2 = missing, -1 = no expiry, >=0 = seconds remaining
-        status[key] = {"ttl": ttl, "exists": ttl != -2}
-    try:
-        eviction_policy = r.config_get("maxmemory-policy").get("maxmemory-policy", "unknown")
-        maxmemory       = r.config_get("maxmemory").get("maxmemory", "unknown")
-    except Exception:
-        eviction_policy = "unknown"
-        maxmemory       = "unknown"
-    return {
-        "keys": status,
-        "eviction_policy": eviction_policy,
-        "maxmemory": maxmemory,
-    }
+    """Returns all keys currently in Redis for Poltergeist drift detection."""
+    result = _redis_get("keys/*")
+    return {"keys": sorted(result.get("result", []))}
+
+
+# ---------------------------------------------------------------------------
+# Cache warm — restores drift state after a judge applies a fix
+# ---------------------------------------------------------------------------
+
+@app.post("/cache/warm")
+def cache_warm():
+    """Restore drift state for demo replay after a judge applies fixes."""
+    _redis_del("products:list")
+    _redis_set("debug:session_dump", '{"users": "all"}')
+    return {"status": "warmed", "message": "Cache drift restored. Click Hunt Ghosts to scan again."}

@@ -1,24 +1,17 @@
 # cache_config.yaml — declared cache contract for touchstone-demo-target
 #
-# This is the SOURCE OF TRUTH for how the Redis cache SHOULD be configured.
+# This is the SOURCE OF TRUTH for which keys SHOULD exist in Redis.
 # Touchstone's poltergeist app compares this against the live Redis instance
 # to detect cache drift.
 #
 # Intentional drift baked in for demo:
-#   · eviction_policy declared as allkeys-lru but Upstash default is noeviction
-#   · orders:list declared TTL=180 but warmup sets it to 999 (TTL_MISMATCH)
-#   · products:list declared TTL=600 but warmup never sets it (KEY_MISSING)
-
-eviction_policy: allkeys-lru
-maxmemory_mb: 25
+#   · products:list declared here but never populated by the app (KEY_MISSING)
+#   · debug:session_dump exists in Redis but is NOT declared here (UNDECLARED_KEY)
 
 keys:
   users:list:
-    ttl: 300
-    description: Cached list of all users (5 min)
+    description: Cached list of all users
   orders:list:
-    ttl: 180
-    description: Cached list of all orders (3 min)
+    description: Cached list of all orders
   products:list:
-    ttl: 600
-    description: Cached list of all products (10 min)
+    description: Cached list of all products
