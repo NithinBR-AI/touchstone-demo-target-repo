@@ -218,7 +218,35 @@ def cache_status():
 
 @app.post("/cache/warm")
 def cache_warm():
-    """Restore drift state for demo replay after a judge applies fixes."""
+    """Restore drift state for demo replay after a judge applies fixes.
+
+    After warm, Redis state is:
+      users:list         ✓ present (declared, healthy)
+      orders:list        ✓ present (declared, healthy)
+      products:list      ✗ absent  → KEY_MISSING ghost
+      debug:session_dump ✓ present (undeclared) → UNDECLARED_KEY ghost
+    """
+    with _conn() as conn:
+        users = conn.execute(
+            "SELECT id, email, age, created_at FROM users ORDER BY id"
+        ).fetchall()
+        orders = conn.execute(
+            "SELECT id, user_id, total, status FROM orders ORDER BY id"
+        ).fetchall()
+
+    users_data = [
+        {"id": r[0], "email": r[1], "age": r[2],
+         "created_at": r[3].isoformat() if r[3] else None, "account_status": "active"}
+        for r in users
+    ]
+    orders_data = [
+        {"id": r[0], "user_id": r[1], "total": float(r[2]) if r[2] else None, "status": r[3]}
+        for r in orders
+    ]
+
+    _redis_set("users:list", json.dumps(users_data, default=str))
+    _redis_set("orders:list", json.dumps(orders_data, default=str))
     _redis_del("products:list")
     _redis_set("debug:session_dump", '{"users": "all"}')
+
     return {"status": "warmed", "message": "Cache drift restored. Click Hunt Ghosts to scan again."}
