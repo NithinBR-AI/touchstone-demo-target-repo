@@ -188,6 +188,13 @@ def list_products():
 # Cache
 # ---------------------------------------------------------------------------
 
+@app.delete("/cache/delete")
+def cache_delete(key: str):
+    """Delete a specific key from Redis. Called by Touchstone for KEY_EXTRA fixes."""
+    _redis_del(key)
+    return {"status": "deleted", "key": key}
+
+
 @app.get("/cache/status")
 def cache_status():
     """Return all keys currently in Redis."""

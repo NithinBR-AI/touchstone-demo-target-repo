@@ -41,9 +41,25 @@ Mismatches between `openapi.yaml` and what `main.py` actually returns:
 | `sku` on `/products` | `FIELD_EXTRA` | API returns it, not in spec — fix: PR adds it to `openapi.yaml` |
 | `loyalty_tier` on `/users` | `FIELD_MISSING` | Spec declares it, API doesn't return it — fix: PR adds it to `main.py` |
 
+## Cache drift cases (The Poltergeist app)
+
+Mismatches between `cache_config.yaml` and the live Redis state:
+
+| Ghost | Kind | Description |
+|-------|------|-------------|
+| `products:list` | `KEY_MISSING` | Declared in config, absent from Redis — fix: warms the key via `/cache/warm` |
+| `debug:session_dump` | `KEY_EXTRA` | Present in Redis, not declared in config — fix: deletes the key via `/cache/delete` |
+
+## Cache endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/cache/status` | GET | Returns all keys currently in Redis |
+| `/cache/warm` | POST | Restores demo drift state (or warms a specific declared key via `?key=`) |
+| `/cache/delete` | DELETE | Deletes a specific key from Redis (`?key=`) — called by Touchstone for `KEY_EXTRA` fixes |
+
 ## How Touchstone uses this repo
 
-Target repo is configured in `repos.json` in the Touchstone root. No env vars needed — Touchstone fetches `models.py` and `openapi.yaml` via GitHub raw URLs automatically.
+Target repo is configured in `repos.json` in the Touchstone root. No env vars needed — Touchstone fetches `models.py`, `openapi.yaml`, and `cache_config.yaml` via GitHub raw URLs automatically.
 
-To reset drift after fixes are applied, use the **Reset Demo** button in the Touchstone UI
-(calls `POST /demo/reset` on the schema-drift app, re-seeds the Neon DB).
+To reset drift after fixes are applied, use the **Reset Demo** button in the Touchstone UI.
