@@ -153,3 +153,9 @@ components:
         stock:
           type: integer
           nullable: true
+        account_status:
+          type: string
+          nullable: true
+        sku:
+          type: string
+          nullable: true
