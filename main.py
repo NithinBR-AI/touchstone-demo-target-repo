@@ -1,4 +1,4 @@
-"""
+'''
 Customer Service API — Touchstone demo target.
 
 Intentional drift baked in for demo purposes:
@@ -10,7 +10,7 @@ Intentional drift baked in for demo purposes:
   Contract drift (detected by Contract Observer):
     · GET /users    returns `account_status` — not in openapi.yaml
     · GET /products returns `sku` — not in openapi.yaml
-"""
+'''
 
 from __future__ import annotations
 
@@ -104,6 +104,7 @@ def list_users():
             "id": r[0], "email": r[1], "age": r[2],
             "created_at": r[3].isoformat() if r[3] else None,
             "account_status": "active",  # undocumented — contract drift
+            "loyalty_tier": None,  # TODO: implement
         }
         for r in rows
     ]
@@ -190,20 +191,20 @@ def list_products():
 
 @app.delete("/cache/delete")
 def cache_delete(key: str):
-    """Delete a specific key from Redis. Called by Touchstone for KEY_EXTRA fixes."""
+    '''Delete a specific key from Redis. Called by Touchstone for KEY_EXTRA fixes.'''
     _redis_del(key)
     return {"status": "deleted", "key": key}
 
 
 @app.get("/cache/status")
 def cache_status():
-    """Return all keys currently in Redis."""
+    '''Return all keys currently in Redis.'''
     return {"keys": sorted(_redis_keys())}
 
 
 @app.post("/cache/warm")
 def cache_warm(key: str | None = None):
-    """Warm a specific declared cache key from the DB.
+    '''Warm a specific declared cache key from the DB.
 
     POST /cache/warm?key=products:list  — populates that key in Redis.
     POST /cache/warm                    — full reset, restores demo drift state.
@@ -213,7 +214,7 @@ def cache_warm(key: str | None = None):
       orders:list        ✓ cached
       products:list      ✗ missing  → KEY_MISSING ghost
       debug:session_dump ✓ present, undeclared → UNDECLARED_KEY ghost
-    """
+    '''
     with _conn() as conn:
         users  = conn.execute("SELECT id, email, age, created_at FROM users ORDER BY id").fetchall()
         orders = conn.execute("SELECT id, user_id, total, status FROM orders ORDER BY id").fetchall()
