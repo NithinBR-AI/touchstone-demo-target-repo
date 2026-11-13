@@ -118,6 +118,12 @@ components:
           type: string
           nullable: true
           description: Customer loyalty tier (bronze/silver/gold) — declared in spec but not yet returned by API
+        account_status:
+          type: string
+          nullable: true
+        sku:
+          type: string
+          nullable: true
 
     Order:
       type: object
