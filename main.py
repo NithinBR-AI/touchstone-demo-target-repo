@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 Customer Service API — Touchstone demo target.
 
@@ -104,6 +105,7 @@ def list_users():
             "id": r[0], "email": r[1], "age": r[2],
             "created_at": r[3].isoformat() if r[3] else None,
             "account_status": "active",  # undocumented — contract drift
+            "loyalty_tier": None,  # TODO: implement
         }
         for r in rows
     ]
