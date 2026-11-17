@@ -8,8 +8,8 @@ It represents a fictional **customer-service microservice** with intentional dri
 
 ## Deployment
 
-Live API: **https://touchstone-demo-target-repo.onrender.com**  
-(Render free tier — first request after 15 min idle may take ~30s to cold-start)
+Live API: **https://touchstone-demo-target-repo.vercel.app**  
+(Vercel serverless function — no long cold start; Vercel detects the FastAPI `app` in `main.py`)
 
 ## Files
 
@@ -19,7 +19,6 @@ Live API: **https://touchstone-demo-target-repo.onrender.com**
 | `openapi.yaml` | OpenAPI spec — what the API *should* return |
 | `main.py` | FastAPI live app — the actual running service |
 | `requirements.txt` | Python dependencies |
-| `render.yaml` | Render deployment config |
 
 ## Schema drift cases (Schema Drift app)
 
